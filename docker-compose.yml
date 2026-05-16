@@ -1,0 +1,142 @@
+services:
+
+  # ── Certbot: TLS provisioning & auto-renewal ─────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    restart: on-failure
+    volumes:
+      - certs:/etc/letsencrypt
+      - certbot_webroot:/var/www/certbot
+    entrypoint: >
+      sh -c "
+        certbot certonly --webroot
+          --webroot-path=/var/www/certbot
+          --email $${ACME_EMAIL}
+          --agree-tos
+          --no-eff-email
+          --keep-until-expiring
+          -d $${DOMAIN}
+        && while :; do
+          certbot renew --quiet 2>/dev/null || true;
+          sleep 12h;
+        done"
+    environment:
+      DOMAIN:     ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    networks:
+      - mediflow
+
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: on-failure                 # restart_policy: condition on-failure
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/entrypoint.sh:/entrypoint.sh:ro
+      - certs:/etc/letsencrypt:ro
+      - certbot_webroot:/var/www/certbot:ro
+      - nginx_logs:/var/log/nginx
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+      certbot:
+        condition: service_started
+    # ── Resource limits (standalone Compose — NOT Swarm) ──────────────────────
+    mem_limit:       100m               # nginx:alpine is very lean
+    mem_reservation: 32m
+    cpus:            "0.1"
+    memswap_limit:   100m               # no swap for nginx — if it needs swap, something is wrong
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - mediflow
+
+  # ── Next.js frontend ──────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    restart: on-failure
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV: production
+    # ── Resource limits ───────────────────────────────────────────────────────
+    mem_limit:       400m               # Next.js standalone: ~150-250 MB typical
+    mem_reservation: 200m
+    cpus:            "0.4"             # leaves 1.6 vCPU for backend inference
+    memswap_limit:   512m               # 400m RAM + 112m swap headroom
+    healthcheck:
+      test: ["CMD", "node", "-e",
+        "require('http').get('http://localhost:3000/', r => process.exit(r.statusCode < 400 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - mediflow
+
+  # ── FastAPI backend ───────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile            # CMD: uvicorn --workers 1 --timeout-keep-alive 35
+    restart: on-failure
+    expose:
+      - "8000"
+    env_file:
+      - .env
+    # ── Resource limits ───────────────────────────────────────────────────────
+    # Budget breakdown (4 GB VM):
+    #   backend  : 2500m  ← EfficientNet-B0 peak ~1.5 GB + uvicorn + LangGraph overhead
+    #   frontend :  400m
+    #   nginx    :  100m
+    #   OS/kernel:  ~600m (reserved, never allocate against this)
+    #   Total    : 3600m  ← leaves 400m OS headroom on a 4 GB VM
+    mem_limit:       2500m
+    mem_reservation: 1500m             # kernel will try to keep at least this free for backend
+    cpus:            "1.5"             # majority of both vCPUs for inference
+    # memswap_limit = mem_limit + swap allowance
+    # Requires /swapfile (2 GB) on the host — see setup commands below
+    memswap_limit:   3000m             # 2500m RAM + 500m swap overflow
+    healthcheck:
+      # Checks FastAPI liveness + GEMINI_API_KEY + SPEECHMATICS_API_KEY presence
+      test: ["CMD", "python", "health_check.py"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 45s               # B0 cold-start: model load + ONNX session init
+    networks:
+      - mediflow
+
+volumes:
+  certs:
+  certbot_webroot:
+  nginx_logs:
+
+networks:
+  mediflow:
+    driver: bridge
+
+# ── Vultr VM swap setup (run once after provisioning) ─────────────────────────
+# sudo fallocate -l 2G /swapfile
+# sudo chmod 600 /swapfile
+# sudo mkswap /swapfile
+# sudo swapon /swapfile
+# echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+#
+# Verify: free -h   (should show 2.0G under Swap)
