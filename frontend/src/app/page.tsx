@@ -170,10 +170,10 @@ const XRayCanvas = ({ result }: { result?: AnalysisResult }) => {
           <div className="bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800 p-4">
             <p className="text-xs font-medium text-green-600 dark:text-green-400 uppercase mb-2">Cost Estimate</p>
             <p className="text-lg font-bold text-green-700 dark:text-green-300">
-              Rp {result.finance_estimate.estimated_cost.toLocaleString('id-ID')}
+              Rp {(result.finance_estimate?.estimated_cost || 0).toLocaleString('id-ID')}
             </p>
             <p className="text-xs text-green-600 dark:text-green-400 mt-1">
-              BPJS: Rp {result.finance_estimate.bpjs_coverage.toLocaleString('id-ID')}
+              BPJS Coverage: {result.finance_estimate?.bpjs_coverage || 0}%
             </p>
           </div>
         )}
