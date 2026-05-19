@@ -311,9 +311,9 @@ const generateMedicalReport = async (result: AnalysisResult, imageBase64: string
   const tableData = [
     ['Test Type', 'Tuberculosis Detection (Chest X-Ray)'],
     ['AI Model', 'EfficientNet-B4 with Grad-CAM'],
-    ['Prediction', result.prediction],
+    ['Prediction', result.diagnosis],
     ['Confidence Score', `${(result.confidence * 100).toFixed(1)}%`],
-    ['Raw Probability', `${(result.probability * 100).toFixed(1)}%`],
+    ['Raw Probability', `${(result.confidence * 100).toFixed(1)}%`],
     ['Analysis Date', new Date().toLocaleString()],
   ];
 
@@ -340,7 +340,7 @@ const generateMedicalReport = async (result: AnalysisResult, imageBase64: string
   pdf.setTextColor(0, 0, 0);
 
   let interpretation = '';
-  if (result.prediction === 'TBC') {
+ if (result.diagnosis === 'Tuberculosis') {
     interpretation = `The AI analysis indicates a ${result.confidence > 0.8 ? 'high' : result.confidence > 0.6 ? 'moderate' : 'low'} probability of tuberculosis infection. `;
     interpretation += 'The Grad-CAM heatmap highlights suspicious areas that require immediate clinical attention. ';
     interpretation += 'Further diagnostic tests including sputum culture, PCR testing, and clinical evaluation are strongly recommended.';
