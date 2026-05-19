@@ -1,3 +1,4 @@
+/** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
@@ -10,6 +11,17 @@ const nextConfig = {
       {
         source: "/api/:path*",
         destination: "https://mosaic-duration-dolphin.ngrok-free.dev/api/:path*",
+      },
+    ];
+  },
+  async headers() {
+    return [
+      {
+        source: "/api/:path*",
+        headers: [
+          { key: "ngrok-skip-browser-warning", value: "true" },
+          { key: "Access-Control-Allow-Origin", value: "*" },
+        ],
       },
     ];
   },
